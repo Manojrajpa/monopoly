@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monopoly Banker — Realtime (Fixed)</title>
+  <meta name="color-scheme" content="dark light" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <style>
+    :root { --card: #0b0b0f; --border:#1b1b22; --muted:#a1a1aa; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:1rem; }
+    .chip { background:#111827; border:1px solid var(--border); }
+    .glass { backdrop-filter: blur(10px); background: rgba(12,12,16,0.6); border: 1px solid rgba(255,255,255,0.08); }
+    .btn { border-radius:0.8rem; padding:0.6rem 1rem; font-weight:600; }
+    .btn-primary { background:#10b981; } .btn-primary:hover{ background:#059669; }
+    .btn-sky { background:#0284c7; } .btn-sky:hover { background:#0369a1; }
+    .btn-rose{ background:#e11d48; } .btn-rose:hover{ background:#be123c; }
+    .btn-zinc{ background:#3f3f46; } .btn-zinc:hover{ background:#52525b; }
+    .disabled { opacity:.5; pointer-events:none; }
+    label.small { font-size:.8rem; color:#a1a1aa; }
+    #txList { max-height: 360px; overflow-y: auto; }
+    #stickyBalances { position: sticky; top: 0; z-index: 30; backdrop-filter: blur(10px); background: rgba(12,12,16,0.75); border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+  <header class="relative">
+    <img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Monopoly_board_on_white_bg.jpg"
+         alt="Board game" class="h-56 w-full object-cover opacity-70">
+    <div class="absolute inset-0 flex items-center">
+      <div class="max-w-6xl mx-auto w-full px-6">
+        <div class="glass rounded-2xl p-5 md:p-7">
+          <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight">💼 Monopoly Banker — Realtime</h1>
+          <p class="text-zinc-300 mt-1">Create a game, share a 6-char code, and track money, loans, and transactions live.</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    <div id="err" class="hidden mb-4 rounded-xl border border-rose-600 bg-rose-950/40 p-3 text-rose-300"></div>
+
+    <section id="lobby" class="grid md:grid-cols-2 gap-6">
+      <div class="card p-5">
+        <h2 class="text-xl font-semibold mb-3 flex items-center gap-2"><i data-lucide="gamepad-2"></i>Create Game</h2>
+        <label class="block text-sm mb-1">Game name</label>
+        <input id="gameName" class="w-full mb-3 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Saturday Night"/>
+        <label class="block text-sm mb-1">Host / Banker name</label>
+        <input id="hostName" class="w-full mb-4 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Manoj"/>
+        <button id="createBtn" class="btn btn-primary">Create</button>
+        <p id="createMsg" class="mt-3 text-emerald-400 hidden"></p>
+        <p class="text-xs text-zinc-400 mt-2">Note: The host is permanently the Banker for this game.</p>
+      </div>
+
+      <div class="card p-5">
+        <h2 class="text-xl font-semibold mb-3 flex items-center gap-2"><i data-lucide="log-in"></i>Join Game</h2>
+        <label class="block text-sm mb-1">Join code</label>
+        <input id="joinCode" class="w-full mb-3 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 uppercase" maxlength="6" placeholder="ABC123"/>
+        <button id="joinBtn" class="btn btn-sky">Join</button>
+        <p id="joinMsg" class="mt-3 text-sky-400 hidden"></p>
+      </div>
+    </section>
+
+    <section id="game" class="hidden">
+      <div id="stickyBalances" class="hidden -mx-6 px-6 py-2">
+        <div class="text-sm text-zinc-300 mb-1">Cash in hand</div>
+        <div id="stickyBalancesRows" class="flex gap-4 flex-wrap"></div>
+      </div>
+
+      <div class="flex flex-col sm:flex-row sm:items-center gap-3 mt-8">
+        <div class="flex-1">
+          <h2 class="text-2xl font-semibold">Game: <span id="gameTitle"></span></h2>
+          <div class="flex items-center gap-2 mt-1">
+            <span class="chip px-2 py-1 rounded text-xs">Code: <b id="gameCode"></b></span>
+            <span id="statusBadge" class="chip px-2 py-1 rounded text-xs">Active</span>
+            <span id="meBadge" class="chip px-2 py-1 rounded text-xs hidden">Me: <b id="meName"></b></span>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button id="copyLinkBtn" class="btn btn-zinc" title="Copy join link"><i data-lucide="copy"></i></button>
+          <button id="endBtn" class="btn btn-rose hidden">🏁 End Game</button>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-6 mt-6">
+        <div class="card p-5">
+          <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="users"></i>Players</h3>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <input id="pName" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Player name"/>
+            <input id="pToken" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Token (Car, Dog...)"/>
+            <input id="pCash" type="number" value="1500" min="0" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800"/>
+          </div>
+          <div class="flex gap-2">
+            <button id="addPlayerBtn" class="btn btn-primary">Add Player</button>
+          </div>
+          <div id="playersList" class="mt-4 text-sm"></div>
+        </div>
+
+        <div class="card p-5">
+          <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="receipt"></i>Record Transaction</h3>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <select id="txType" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800">
+              <option>rent</option><option>purchase</option><option>tax</option>
+              <option>fee</option><option>trade</option><option>bank_payout</option>
+              <option>salary_go</option><option>fine</option><option>refund</option>
+              <option>loan_issue</option><option>loan_repayment</option><option>interest_payment</option>
+            </select>
+            <input id="txReason" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Reason / description"/>
+            <div>
+              <label class="small">From</label>
+              <select id="txFrom" class="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800"></select>
+            </div>
+            <div>
+              <label class="small">To</label>
+              <select id="txTo" class="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800"></select>
+            </div>
+            <input id="txAmt" type="number" min="1" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Amount"/>
+            <input id="txTurn" type="number" value="1" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Turn"/>
+          </div>
+          <div class="flex gap-2 items-center">
+            <button id="addTxBtn" class="btn btn-sky">Add Transaction</button>
+            <select id="salaryPlayer" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800"></select>
+            <button id="quickGoBtn" class="btn btn-zinc">+200 Salary on GO</button>
+          </div>
+          <div class="text-xs text-zinc-400 mt-2" id="txHint"></div>
+          <div id="balances" class="mt-4 text-sm"></div>
+        </div>
+
+        <div class="card p-5 lg:col-span-2">
+          <h3 class="text-lg font-semibold mb-3 flex items-center gap-2"><i data-lucide="banknote"></i>Loans</h3>
+          <div class="grid md:grid-cols-3 gap-3">
+            <div class="md:col-span-1">
+              <div class="grid grid-cols-2 gap-3">
+                <select id="loanPlayer" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800"></select>
+                <input id="loanAmt" type="number" min="1" value="100" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Amount"/>
+                <input id="loanRate" type="number" min="0" value="10" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Interest % (opt)"/>
+                <input id="loanNotes" class="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800" placeholder="Notes (optional)"/>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button id="giveLoanBtn" class="btn btn-primary">Give Loan</button>
+              </div>
+              <div class="text-xs text-zinc-400 mt-2" id="loanHint"></div>
+            </div>
+            <div class="md:col-span-2">
+              <div class="flex items-center justify-between">
+                <div class="text-sm text-zinc-300">Active Loans</div>
+                <div class="text-sm text-zinc-400">Total Outstanding: <b id="loanTotal">$0</b></div>
+              </div>
+              <div id="loansList" class="mt-3 text-sm"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-5 lg:col-span-2">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2"><i data-lucide="list"></i>Ledger</h3>
+            <span class="text-xs text-zinc-400">Newest first • Scroll for older</span>
+          </div>
+          <div id="txList" class="text-sm"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="endScreen" class="hidden">
+      <div class="card p-6">
+        <h2 class="text-2xl font-bold mb-2">🏁 Game Over</h2>
+        <p class="text-zinc-300 mb-4" id="endSubtitle"></p>
+        <div id="finalTable" class="mb-4"></div>
+        <div class="flex gap-2">
+          <button id="backHomeBtn" class="btn btn-primary">Back to Home</button>
+          <button id="downloadCsvBtn" class="btn btn-zinc">Download CSV</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  (async () => {
+    if (window.lucide && typeof lucide.createIcons === 'function') { lucide.createIcons(); }
+
+    const SUPABASE_URL = "https://qvcdotkwzgexpdiuhzgj.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2Y2RvdGt3emdleHBkaXVoemdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ3MzQ1NzUsImV4cCI6MjA3MDMxMDU3NX0.kBrNO3oov9e0qvH_EY-CNMO3Y2w2FlI-yyiistYhCpg";
+    const { createClient } = supabase;
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const $ = (id) => document.getElementById(id);
+    const lobby = $('lobby'), game = $('game'), endScreen = $('endScreen');
+    const createMsg = $('createMsg'), joinMsg = $('joinMsg'), errBox = $('err');
+    const gameTitle = $('gameTitle'), gameCodeEl = $('gameCode'), statusBadge = $('statusBadge');
+    const meBadge = $('meBadge'), meName = $('meName'), endBtn = $('endBtn');
+    const playersList = $('playersList'), txList = $('txList'), balancesDiv = $('balances');
+    const loanPlayerSel = $('loanPlayer'), loanTotalEl = $('loanTotal');
+    const txFromSel = $('txFrom'), txToSel = $('txTo'), txHint = $('txHint');
+    const finalTable = $('finalTable'), endSubtitle = $('endSubtitle');
+    const backHomeBtn = $('backHomeBtn'), downloadCsvBtn = $('downloadCsvBtn');
+    const giveLoanBtn = $('giveLoanBtn'), loanHint = $('loanHint');
+    const stickyBalances = $('stickyBalances'), stickyBalancesRows = $('stickyBalancesRows');
+    const salaryPlayerSel = $('salaryPlayer');
+
+    let currentGame = null, players = [], transactions = [], loans = [];
+    let me = { id: null };
+    let meLocked = false; // per-game lock
+
+    const key = (suffix) => currentGame ? `monopoly_${suffix}_${currentGame.id}` : `monopoly_${suffix}`;
+    const saveMe = () => { try{ localStorage.setItem(key('me_id'), me.id || ''); localStorage.setItem(key('me_lock'), meLocked ? '1' : ''); }catch{} };
+    const loadMe = () => { try{ const id = localStorage.getItem(key('me_id')); const lock = localStorage.getItem(key('me_lock')); me.id = id || null; meLocked = !!lock; }catch{} };
+
+    $('createBtn').onclick = createGame;
+    $('joinBtn').onclick = joinGame;
+    $('addPlayerBtn').onclick = addPlayer;
+    $('addTxBtn').onclick = addTx;
+    $('quickGoBtn').onclick = quickSalaryGo;
+    giveLoanBtn.onclick = giveLoan;
+    endBtn.onclick = endGame;
+    backHomeBtn.onclick = () => { exitToLobby(true); };
+    downloadCsvBtn.onclick = downloadCSV;
+
+    function show(el, msg, ok=false){ el.textContent = msg; el.classList.remove('hidden'); el.style.color = ok ? '#34d399' : '#60a5fa'; }
+    function hide(el){ el.classList.add('hidden'); }
+    function showErr(msg){ errBox.textContent = msg; errBox.classList.remove('hidden'); setTimeout(()=>errBox.classList.add('hidden'), 5000); }
+    function code6(){ return Array.from({length:6},()=> "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random()*32)]).join(""); }
+
+    async function createGame(){
+      try{
+        const name = $('gameName').value.trim();
+        const host = $('hostName').value.trim();
+        if(!name || !host){ show(createMsg, "Enter both fields"); return; }
+        const code = code6();
+        const { data, error } = await sb.from('games').insert({ name, host, code }).select().single();
+        if(error) throw error;
+        show(createMsg, `Created! Share code: ${code}`, true);
+        await sb.from('players').insert({ game_id: data.id, name: host, token: 'Bank', role: 'Banker', starting_cash: 1500 });
+        enterGame(data);
+      }catch(e){ console.error(e); showErr(e.message || 'Failed to create game'); }
+    }
+    async function joinGame(){
+      try{
+        const code = $('joinCode').value.trim().toUpperCase();
+        if(!code){ return; }
+        const { data, error } = await sb.from('games').select('*').eq('code', code).maybeSingle();
+        if(error || !data){ show(joinMsg, "Invalid code"); return; }
+        hide(joinMsg);
+        enterGame(data);
+      }catch(e){ console.error(e); showErr(e.message || 'Join failed'); }
+    }
+
+    function enterGame(g){
+      currentGame = g;
+      loadMe();
+      lobby.classList.add('hidden'); endScreen.classList.add('hidden'); game.classList.remove('hidden');
+      gameTitle.textContent = `${g.name} (Host/Banker: ${g.host})`;
+      gameCodeEl.textContent = g.code;
+      statusBadge.textContent = g.status || 'active';
+      setupRealtime(); refreshAll();
+      if(location.hash){ history.replaceState(null, '', location.pathname + location.search); }
+      stickyBalances.classList.remove('hidden');
+    }
+    function exitToLobby(clearMe=false){
+      currentGame = null;
+      lobby.classList.remove('hidden'); game.classList.add('hidden'); endScreen.classList.add('hidden');
+      if(clearMe){ try { localStorage.clear(); } catch {} me.id = null; meLocked=false; }
+      if(location.hash){ history.replaceState(null, '', location.pathname + location.search); }
+    }
+
+    let gameChannel = null, playersChannel = null, txChannel = null, loansChannel = null;
+
+    function setupRealtime(){
+      if(playersChannel) sb.removeChannel(playersChannel);
+      if(txChannel) sb.removeChannel(txChannel);
+      if(loansChannel) sb.removeChannel(loansChannel);
+      if(gameChannel) sb.removeChannel(gameChannel);
+
+      playersChannel = sb.channel('players-'+currentGame.id)
+        .on('postgres_changes', { event:'*', schema:'public', table:'players', filter:`game_id=eq.${currentGame.id}` }, refreshPlayers)
+        .subscribe();
+      txChannel = sb.channel('tx-'+currentGame.id)
+        .on('postgres_changes', { event:'*', schema:'public', table:'transactions', filter:`game_id=eq.${currentGame.id}` }, refreshTx)
+        .subscribe();
+      loansChannel = sb.channel('loans-'+currentGame.id)
+        .on('postgres_changes', { event:'*', schema:'public', table:'loans', filter:`game_id=eq.${currentGame.id}` }, refreshLoans)
+        .subscribe();
+      gameChannel = sb.channel('games-'+currentGame.id)
+        .on('postgres_changes', { event:'UPDATE', schema:'public', table:'games', filter:`id=eq.${currentGame.id}` }, (payload)=>{
+          if(payload?.new?.status && payload.new.status !== (currentGame.status||'active')){
+            currentGame.status = payload.new.status;
+            if(currentGame.status !== 'active'){ onGameEnded(); }
+          }
+        })
+        .subscribe();
+    }
+
+    async function refreshAll(){ await Promise.all([refreshPlayers(), refreshTx(), refreshLoans(), refreshGameRow()]); syncMeUI(); }
+    async function refreshGameRow(){
+      const { data } = await sb.from('games').select('*').eq('id', currentGame.id).maybeSingle();
+      if(data){ currentGame = data; if((currentGame.status||'active') !== 'active'){ onGameEnded(); } }
+    }
+
+    async function refreshPlayers(){
+      const { data, error } = await sb.from('players').select('*').eq('game_id', currentGame.id).order('created_at',{ascending:true});
+      if(error) return showErr(error.message);
+      players = data||[];
+      renderPlayers(); renderBalances(); renderLoanPlayerSelect(); renderTxSelects(); renderSalarySelect(); syncMeUI();
+    }
+    async function refreshTx(){
+      const { data, error } = await sb.from('transactions').select('*').eq('game_id', currentGame.id).order('ts',{ascending:false});
+      if(error) return showErr(error.message);
+      transactions = data||[]; renderTx(); renderBalances();
+    }
+    async function refreshLoans(){
+      const { data, error } = await sb.from('loans').select('*').eq('game_id', currentGame.id).order('issued_at',{ascending:true});
+      if(error) return showErr(error.message);
+      loans = data||[]; renderLoans();
+    }
+
+    function renderPlayers(){
+      if(players.length===0){ playersList.innerHTML = '<div class="text-zinc-400">No players yet.</div>'; return; }
+      playersList.innerHTML = players.map(p => {
+        const isBanker = p.name === (currentGame?.host||'');
+        const meMark = (me.id===p.id) ? 'ME' : 'Set Me';
+        return `
+        <div class="flex items-center justify-between py-2 border-b border-zinc-800">
+          <div class="flex items-center gap-3">
+            <button class="chip px-2 py-1 rounded text-xs ${me.id===p.id?'bg-emerald-900/40 border-emerald-600':''}" onclick="window._setMe('${p.id}','${p.name}')">${meMark}</button>
+            <div>
+              <div class="font-semibold">${p.name} <span class="text-xs text-zinc-400">(${isBanker?'Banker':'Player'})</span></div>
+              <div class="text-xs text-zinc-400">Token: ${p.token||'-'} • Start: $${p.starting_cash}</div>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="window._delPlayer('${p.id}')" class="text-zinc-400 hover:text-rose-400" title="Remove this player">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+      if(window.lucide) lucide.createIcons();
+    }
+    window._setMe = (id, name) => {
+      if(meLocked) { return showErr('You already set yourself for this game.'); }
+      me = { id, name };
+      meLocked = true;
+      saveMe();
+      syncMeUI(); renderPlayers();
+    };
+    window._delPlayer = async (id)=>{
+      const p = players.find(x=>x.id===id);
+      if(!p) return;
+      if(p.name === (currentGame?.host||'')){ return showErr('The Banker (host) cannot be removed.'); }
+      if(!confirm(`Remove ${p.name}?`)) return;
+      const { error } = await sb.from('players').delete().eq('id', id);
+      if(error){ showErr(error.message); } else { refreshPlayers(); }
+      if(me.id===id){ me={id:null}; meLocked=false; saveMe(); syncMeUI(); }
+    };
+
+    function renderTx(){
+      if(transactions.length===0){ txList.innerHTML = '<div class="text-zinc-400">No transactions yet.</div>'; return; }
+      txList.innerHTML = transactions.map(t => `
+        <div class="grid grid-cols-12 gap-2 py-1 border-b border-zinc-800">
+          <div class="col-span-2 text-xs text-zinc-400">${dayjs(t.ts).format('HH:mm:ss')}</div>
+          <div class="col-span-2">T${t.turn}</div>
+          <div class="col-span-2">${t.type}</div>
+          <div class="col-span-4">${t.from_entity||''} → ${t.to_entity||''} <span class="text-xs text-zinc-400">${t.reason||''}</span></div>
+          <div class="col-span-2 font-mono">$${t.amount}</div>
+        </div>`).join('');
+    }
+
+    function currentBalances(){
+      const BANK = "BANK";
+      const bal = {};
+      players.forEach(p => { bal[p.name] = (bal[p.name]||0) + (p.starting_cash||0); });
+      bal[BANK] = bal[BANK] || 0;
+      transactions.forEach(t => {
+        const a = Number(t.amount)||0;
+        if(t.from_entity){ bal[t.from_entity] = (bal[t.from_entity]||0) - a; }
+        if(t.to_entity){ bal[t.to_entity] = (bal[t.to_entity]||0) + a; }
+      });
+      return bal;
+    }
+    function renderBalances(){
+      const bal = currentBalances();
+      const chips = Object.entries(bal).filter(([n])=>n!=='BANK').sort((a,b)=>b[1]-a[1]).map(([n,v])=>`<span class="chip px-2 py-1 rounded">${n}: <b>$${v}</b></span>`).join(' ');
+      stickyBalancesRows.innerHTML = chips || '<span class="text-zinc-400">No players yet.</span>';
+      const rows = Object.entries(bal).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+        <div class="flex justify-between py-1 border-b border-zinc-800">
+          <span>${k}</span><span class="font-mono">$${v}</span>
+        </div>`).join('');
+      balancesDiv.innerHTML = rows || '<div class="text-zinc-400">No balances yet.</div>';
+    }
+
+    function renderLoanPlayerSelect(){
+      const prev = loanPlayerSel.value;
+      loanPlayerSel.innerHTML = players.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+      if(prev && Array.from(loanPlayerSel.options).some(o=>o.value===prev)) loanPlayerSel.value = prev;
+    }
+    function renderTxSelects(){
+      const prevFrom = txFromSel.value;
+      const prevTo = txToSel.value;
+      const opts = ['<option value="BANK">BANK</option>']
+        .concat(players.map(p=>`<option value="${p.name}">${p.name}</option>`));
+      txFromSel.innerHTML = opts.join('');
+      txToSel.innerHTML = opts.join('');
+      if(prevFrom && Array.from(txFromSel.options).some(o=>o.value===prevFrom)) txFromSel.value = prevFrom;
+      if(prevTo && Array.from(txToSel.options).some(o=>o.value===prevTo)) txToSel.value = prevTo;
+      if(!isMeBanker()){
+        const mine = players.find(p=>p.id===me.id);
+        if(mine){ txFromSel.value = mine.name; txFromSel.disabled = true; }
+      } else {
+        txFromSel.disabled = false;
+      }
+    }
+    function renderSalarySelect(){
+      const prev = salaryPlayerSel.value;
+      salaryPlayerSel.innerHTML = players.map(p=>`<option value="${p.name}">${p.name}</option>`).join('');
+      if(prev && Array.from(salaryPlayerSel.options).some(o=>o.value===prev)) salaryPlayerSel.value = prev;
+    }
+
+    function renderLoans(){
+      const listEl = document.getElementById('loansList');
+      // Preserve any in-progress repayment inputs
+      const preserve = {};
+      if (listEl) {
+        listEl.querySelectorAll('input[type="number"]').forEach(inp => {
+          const cls = Array.from(inp.classList).find(c => c.startsWith('repay-'));
+          if (cls) { preserve[cls.replace('repay-','')] = inp.value; }
+        });
+      }
+      const active = loans.filter(l=>l.status==='open');
+      const total = active.reduce((s,l)=>s + Number(l.principal) + Number(l.outstanding_interest||0) - Number(l.repaid_principal||0) - Number(l.repaid_interest||0), 0);
+      loanTotalEl.textContent = `$${total}`;
+      if(active.length===0){
+        listEl.innerHTML = '<div class="text-zinc-400">No active loans.</div>';
+        return;
+      }
+      listEl.innerHTML = active.map(l => {
+        const due = Number(l.principal) + Number(l.outstanding_interest||0) - Number(l.repaid_principal||0) - Number(l.repaid_interest||0);
+        const borrowerName = findPlayerName(l.game_id,l.borrower) || l.borrower;
+        const canRepay = isMeBanker() || (me?.id && l.borrower === me.id);
+        const repayBtn = canRepay ? `<button class="btn btn-zinc" onclick="window._repay('${l.id}')">Repay</button>` : '';
+        const bankerBtns = isMeBanker() ? `<button class="btn btn-zinc" onclick="window._addInterest('${l.id}')">+Interest</button>` : '';
+        return `
+        <div class="flex items-center justify-between py-2 border-b border-zinc-800">
+          <div>
+            <div class="font-medium">${borrowerName}</div>
+            <div class="text-xs text-zinc-400">Principal: $${l.principal} • Rate: ${l.interest_rate_pct||0}% • Due: $${due}</div>
+          </div>
+          <div class="flex gap-2">
+            <input type="number" min="1" placeholder="Repay $" class="repay-${l.id} px-2 py-1 rounded bg-zinc-900 border border-zinc-800 w-28">
+            ${repayBtn}
+            ${bankerBtns}
+          </div>
+        </div>`;
+      }).join('');
+      // Restore preserved values after re-render
+      Object.entries(preserve).forEach(([id,val]) => {
+        const inp = listEl.querySelector(`.repay-${id}`);
+        if (inp && val !== undefined) inp.value = val;
+      });
+    }
+    function findPlayerName(gameId, playerId){
+      const p = players.find(x=>x.id===playerId);
+      return p ? p.name : null;
+    }
+
+    async function addPlayer(){
+      if(!currentGame) return;
+      const name = $('pName').value.trim();
+      const token = $('pToken').value.trim();
+      const cash  = parseInt($('pCash').value||"1500",10);
+      if(!name) return;
+      const role = (name === currentGame.host) ? 'Banker' : 'Player';
+      if(role === 'Banker'){
+        const bankerExists = players.find(p=>p.name===currentGame.host);
+        if(bankerExists){ return showErr('Banker already exists.'); }
+      }
+      const { data, error } = await sb.from('players').insert({ game_id: currentGame.id, name, token, role, starting_cash: cash }).select().single();
+      if(error){ showErr(error.message); return; }
+      if(!me.id){ window._setMe(data.id, data.name); }
+      $('pName').value = ''; $('pToken').value = '';
+    }
+
+    async function addTx(){
+      if(!currentGame) return;
+      const type   = $('txType').value;
+      const reason = $('txReason').value.trim();
+      const fromE  = $('txFrom').value;
+      const toE    = $('txTo').value;
+      const amount = parseInt($('txAmt').value||"0",10);
+      const turn   = parseInt($('txTurn').value||"1",10);
+      if(!amount || amount<=0) return showErr('Enter a positive amount.');
+      if(fromE === toE) return showErr('From and To cannot be the same.');
+      if(!isMeBanker()){
+        const mine = players.find(p=>p.id===me.id);
+        if(!mine) return showErr('Set your player using "Set Me".');
+        if(fromE !== mine.name) return showErr('As a player, you can only pay from your own balance.');
+      }
+      const bal = currentBalances();
+      if(fromE !== 'BANK' && amount > (bal[fromE]||0)){
+        return showErr(`${fromE} does not have enough cash. Available: $${bal[fromE]||0}`);
+      }
+      if(type === 'loan_issue' && !isMeBanker()){
+        return showErr('Only the Banker can disburse loans.');
+      }
+      const { error } = await sb.from('transactions').insert({ game_id: currentGame.id, type, reason, from_entity: fromE, to_entity: toE, amount, turn });
+      if(error){ showErr(error.message); return; }
+      $('txAmt').value = ''; $('txReason').value = '';
+    }
+
+    async function quickSalaryGo(){
+      if(!isMeBanker()) return showErr('Only the Banker can pay salary on GO.');
+      const name = salaryPlayerSel.value;
+      if(!name) return;
+      await sb.from('transactions').insert({
+        game_id: currentGame.id, type:'salary_go', reason:'Salary on GO', from_entity:'BANK', to_entity:name, amount:200, turn:1
+      });
+    }
+
+    async function giveLoan(){
+      if(!currentGame) return;
+      if(!isMeBanker()) return showErr('Only the Banker can give loans.');
+      const borrowerId = loanPlayerSel.value;
+      const borrower = players.find(p=>p.id===borrowerId);
+      const principal = parseInt($('loanAmt').value||"0",10);
+      const rate = parseFloat($('loanRate').value||"0");
+      const notes = $('loanNotes').value.trim();
+      if(!borrower || principal<=0) return;
+      const existing = loans.find(l=>l.borrower===borrower.id && l.status==='open');
+      if(existing){
+        const newPrincipal = Number(existing.principal) + principal;
+        const { error: upErr } = await sb.from('loans').update({ principal: newPrincipal }).eq('id', existing.id);
+        if(upErr) return showErr(upErr.message);
+        await sb.from('transactions').insert({
+          game_id: currentGame.id, type:'loan_issue', reason:`Loan top-up ${existing.id.slice(0,8)}`, from_entity:'BANK', to_entity: borrower.name, amount: principal, turn:1
+        });
+      } else {
+        const { data, error } = await sb.from('loans').insert({
+          game_id: currentGame.id, borrower: borrower.id, principal, interest_rate_pct: rate, notes, status:'open'
+        }).select().single();
+        if(error){ showErr(error.message); return; }
+        await sb.from('transactions').insert({
+          game_id: currentGame.id, type:'loan_issue', reason:`Loan ${data.id.slice(0,8)} issued`, from_entity:'BANK', to_entity: borrower.name, amount: principal, turn:1
+        });
+      }
+      $('loanNotes').value = '';
+    }
+
+    window._repay = async (loanId)=>{
+      const input = document.querySelector(`.repay-${loanId}`);
+      const amt = parseInt(input?.value||"0",10); if(!amt) return;
+      const loan = loans.find(l=>l.id===loanId); if(!loan) return;
+      if(!isMeBanker() && me?.id !== loan.borrower){ return showErr('You can only repay your own loan.'); }
+      const due = Number(loan.principal) + Number(loan.outstanding_interest||0) - Number(loan.repaid_principal||0) - Number(loan.repaid_interest||0);
+      if(amt > due){ return showErr(`Repayment exceeds due ($${due}).`); }
+      const borrowerName = findPlayerName(loan.game_id, loan.borrower);
+      await sb.from('transactions').insert({
+        game_id: currentGame.id, type:'loan_repayment', reason:`Loan ${loanId.slice(0,8)} repayment`, from_entity: borrowerName, to_entity:'BANK', amount: amt, turn:1
+      });
+      const newPaid = Number(loan.repaid_principal||0) + amt;
+      const status = (Number(loan.principal) - newPaid) <= 0 ? 'repaid' : 'open';
+      await sb.from('loans').update({ repaid_principal: newPaid, status }).eq('id', loanId);
+      input.value='';
+    };
+    window._addInterest = async (loanId)=>{
+      if(!isMeBanker()) return showErr('Only the Banker can add interest.');
+      const add = parseInt(prompt('Add interest amount:' )||"0",10); if(!add) return;
+      const loan = loans.find(l=>l.id===loanId); if(!loan) return;
+      const newOutstanding = Number(loan.outstanding_interest||0) + add;
+      await sb.from('loans').update({ outstanding_interest: newOutstanding }).eq('id', loanId);
+    };
+
+    function isMeBanker(){
+      const mine = me?.id ? players.find(p=>p.id===me.id) : null;
+      return !!(mine && mine.name === (currentGame?.host||''));
+    }
+    function syncMeUI(){
+      try{ meLocked = !!localStorage.getItem(key('me_lock')); }catch{}
+      const mine = me?.id ? players.find(p=>p.id===me.id) : null;
+      if(mine){ meBadge.classList.remove('hidden'); meName.textContent = mine.name; } else { meBadge.classList.add('hidden'); }
+      if(isMeBanker() && (currentGame?.status||'active') === 'active'){
+        endBtn.classList.remove('hidden');
+        txFromSel.disabled = false; txToSel.disabled = false;
+        txHint.textContent = 'Banker can record any transaction.';
+        giveLoanBtn.classList.remove('disabled'); loanHint.textContent = 'Banker can disburse loans and anyone can repay their own loan.';
+        salaryPlayerSel.disabled = false; document.getElementById('quickGoBtn').classList.remove('disabled');
+      } else {
+        endBtn.classList.add('hidden');
+        const selfName = mine?.name || '';
+        if(selfName){
+          const fromOptions = Array.from(txFromSel.options).map(o=>o.value);
+          if(!fromOptions.includes(selfName)){
+            const opt = document.createElement('option');
+            opt.value = selfName; opt.textContent = selfName;
+            txFromSel.appendChild(opt);
+          }
+          txFromSel.value = selfName;
+        }
+        txFromSel.disabled = true;
+        txToSel.disabled = false;
+        txHint.textContent = 'You can only pay from your own balance to another player or BANK.';
+        giveLoanBtn.classList.add('disabled'); loanHint.textContent = 'Only the Banker can disburse loans. You may repay your own loans.';
+        salaryPlayerSel.disabled = true; document.getElementById('quickGoBtn').classList.add('disabled');
+      }
+      statusBadge.textContent = currentGame?.status||'active';
+    }
+
+    async function endGame(){
+      if(!isMeBanker()){ return showErr('Only the Banker can end the game.'); }
+      await sb.from('games').update({ status:'ended', ended_at: new Date().toISOString() }).eq('id', currentGame.id);
+      onGameEnded();
+    }
+    function onGameEnded(){
+      if(location.hash){ history.replaceState(null, '', location.pathname + location.search); }
+      renderEndScreen();
+      game.classList.add('hidden'); lobby.classList.add('hidden'); endScreen.classList.remove('hidden');
+      document.querySelectorAll('button, input, select').forEach(el=>{
+        if(['backHomeBtn','downloadCsvBtn'].includes(el.id)) return;
+        el.classList.add('disabled');
+      });
+      try { localStorage.removeItem('monopoly_last_code'); } catch {}
+      try {
+        const end = Date.now() + 1000;
+        (function frame(){ confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+          if(Date.now() < end) requestAnimationFrame(frame); })();
+      } catch {}
+    }
+
+    function finalStandings(){
+      const bal = currentBalances();
+      const liabilityByPlayerId = {};
+      loans.filter(l => l.status !== 'repaid').forEach(l => {
+        const due = Number(l.principal) + Number(l.outstanding_interest||0) - Number(l.repaid_principal||0) - Number(l.repaid_interest||0);
+        liabilityByPlayerId[l.borrower] = (liabilityByPlayerId[l.borrower] || 0) + Math.max(0, due);
+      });
+      const liabilityByName = {};
+      players.forEach(p => { liabilityByName[p.name] = liabilityByPlayerId[p.id] || 0; });
+
+      const rows = Object.entries(bal)
+        .filter(([name]) => name !== 'BANK')
+        .map(([name, cash]) => ({
+          name,
+          assets: cash,
+          liability: liabilityByName[name] || 0,
+          net: cash - (liabilityByName[name] || 0)
+        }))
+        .sort((a,b)=>b.net - a.net);
+      return rows;
+    }
+    function renderEndScreen(){
+      const rows = finalStandings();
+      const winner = rows[0]?.name ? `🏆 Winner: ${rows[0].name} with net $${rows[0].net}` : 'No players recorded.';
+      endSubtitle.textContent = winner;
+      const table = [`
+        <div class="grid grid-cols-12 gap-2 border-b border-zinc-800 pb-2 mb-2 font-medium">
+          <div class="col-span-1">#</div>
+          <div class="col-span-5">Player</div>
+          <div class="col-span-2 text-right">Assets</div>
+          <div class="col-span-2 text-right">Liabilities</div>
+          <div class="col-span-2 text-right">Net</div>
+        </div>`].concat(
+        rows.map((r, i)=>`
+          <div class="grid grid-cols-12 gap-2 py-1 border-b border-zinc-800">
+            <div class="col-span-1">${i+1}</div>
+            <div class="col-span-5">${r.name}</div>
+            <div class="col-span-2 text-right">$${r.assets}</div>
+            <div class="col-span-2 text-right text-rose-300">-$${r.liability}</div>
+            <div class="col-span-2 text-right font-semibold">$${r.net}</div>
+          </div>`)
+      ).join('');
+      finalTable.innerHTML = table;
+    }
+    function downloadCSV(){
+      const rows = finalStandings();
+      const header = 'Rank,Player,Assets,Liabilities,Net\\n';
+      const lines = rows.map((r,i)=>`${i+1},${r.name},${r.assets},${r.liability},${r.net}`).join('\\n');
+      const blob = new Blob([header + lines], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'monopoly_final_standings.csv'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function copyInvite(){
+      if(!currentGame) return;
+      const url = `${location.origin}${location.pathname}#${currentGame.code}`;
+      await navigator.clipboard.writeText(`Join code: ${currentGame.code}\\n${url}`);
+    }
+
+    const hashCode = location.hash.replace('#','').trim().toUpperCase();
+    if(hashCode){
+      const { data } = await sb.from('games').select('*').eq('code', hashCode).maybeSingle();
+      if(data){
+        if((data.status||'active') === 'active') enterGame(data);
+        else { renderEndScreen(); lobby.classList.add('hidden'); endScreen.classList.remove('hidden'); }
+      }
+    }
+
+    setInterval(()=>{ if(currentGame) refreshAll(); }, 5000);
+  })();
+  </script>
+</body>
+</html>
